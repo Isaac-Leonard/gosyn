@@ -491,7 +491,7 @@ impl Parser {
                 let pos1 = self.expect(Operator::BarackRight)?;
                 let typ = Box::new(self.type_()?);
                 let arr = ast::ArrayType { pos: (pos0, pos1), len, typ };
-                let typ = ast::Expression::Type(ast::Type::Single(ast::SingleType::Array(arr)));
+                let typ = ast::Expression::Type(ast::Type::Array(arr));
                 let alias = false;
                 let params = ast::FieldList::default();
                 Ok(ast::TypeSpec { docs, alias, name, typ, params })
@@ -504,7 +504,7 @@ impl Parser {
                 };
                 let alias = false;
                 let params = ast::FieldList::default();
-                let typ = ast::Expression::Type(ast::Type::Single(ast::SingleType::Slice(slice)));
+                let typ = ast::Expression::Type(ast::Type::Slice(slice));
                 Ok(ast::TypeSpec { docs, alias, name, typ, params })
             }
             _ => {
@@ -513,7 +513,7 @@ impl Parser {
                 let pos1 = self.expect(Operator::BarackRight)?;
                 let typ = Box::new(self.type_()?);
                 let arr = ast::ArrayType { pos: (pos0, pos1), len, typ };
-                let typ = ast::Expression::Type(ast::Type::Single(ast::SingleType::Array(arr)));
+                let typ = ast::Expression::Type(ast::Type::Array(arr));
                 let alias = false;
                 let params = ast::FieldList::default();
                 Ok(ast::TypeSpec { docs, alias, name, typ, params })
@@ -638,9 +638,7 @@ impl Parser {
                 let pos = self.expect(Operator::Star)?;
                 let typ = Box::new(self.type_()?);
                 let ptr = ast::PointerType { pos, typ };
-                Ok(Some(ast::Expression::Type(ast::Type::Single(
-                    ast::SingleType::Pointer(ptr),
-                ))))
+                Ok(Some(ast::Expression::Type(ast::Type::Pointer(ptr))))
             }
 
             Some((_, Token::Operator(Operator::Arrow))) => {
@@ -650,16 +648,12 @@ impl Parser {
                 let pos = (pos, pos1);
                 let dir = Some(ChanMode::Recv);
                 let chan = ast::ChannelType { pos, dir, typ };
-                Ok(Some(ast::Expression::Type(ast::Type::Single(
-                    ast::SingleType::Channel(chan),
-                ))))
+                Ok(Some(ast::Expression::Type(ast::Type::Channel(chan))))
             }
 
             Some((_, Token::Keyword(Keyword::Func))) => {
                 let typ = self.func_type()?;
-                Ok(Some(ast::Expression::Type(ast::Type::Single(
-                    ast::SingleType::Function(typ),
-                ))))
+                Ok(Some(ast::Expression::Type(ast::Type::Function(typ))))
             }
 
             Some((_, Token::Operator(Operator::BarackLeft))) => {
@@ -668,9 +662,7 @@ impl Parser {
                     let pos = (pos, self.expect(Operator::BarackRight)?);
                     let typ = Box::new(self.type_()?);
                     let slice = ast::SliceType { pos, typ };
-                    return Ok(Some(ast::Expression::Type(ast::Type::Single(
-                        ast::SingleType::Slice(slice),
-                    ))));
+                    return Ok(Some(ast::Expression::Type(ast::Type::Slice(slice))));
                 }
 
                 let len = Box::new(self.array_len()?);
@@ -678,9 +670,7 @@ impl Parser {
                 let typ = Box::new(self.type_()?);
                 let pos = (pos, pos1);
                 let arr = ast::ArrayType { len, typ, pos };
-                Ok(Some(ast::Expression::Type(ast::Type::Single(
-                    ast::SingleType::Array(arr),
-                ))))
+                Ok(Some(ast::Expression::Type(ast::Type::Array(arr))))
             }
 
             Some((_, Token::Keyword(Keyword::Chan))) => {
@@ -690,9 +680,7 @@ impl Parser {
                 let typ = Box::new(self.type_()?);
                 let pos = (pos, pos1);
                 let chan = ast::ChannelType { pos, dir, typ };
-                Ok(Some(ast::Expression::Type(ast::Type::Single(
-                    ast::SingleType::Channel(chan),
-                ))))
+                Ok(Some(ast::Expression::Type(ast::Type::Channel(chan))))
             }
 
             Some((_, Token::Keyword(Keyword::Map))) => {
@@ -703,23 +691,17 @@ impl Parser {
                 let val = Box::new(self.type_()?);
                 let pos = (pos0, pos1);
                 let map = ast::MapType { pos, key, val };
-                Ok(Some(ast::Expression::Type(ast::Type::Single(
-                    ast::SingleType::Map(map),
-                ))))
+                Ok(Some(ast::Expression::Type(ast::Type::Map(map))))
             }
 
             Some((_, Token::Keyword(Keyword::Struct))) => {
                 let typ = self.struct_type()?;
-                Ok(Some(ast::Expression::Type(ast::Type::Single(
-                    ast::SingleType::Struct(typ),
-                ))))
+                Ok(Some(ast::Expression::Type(ast::Type::Struct(typ))))
             }
 
             Some((_, Token::Keyword(Keyword::Interface))) => {
                 let typ = self.parse_interface_type()?;
-                Ok(Some(ast::Expression::Type(ast::Type::Single(
-                    ast::SingleType::Interface(typ),
-                ))))
+                Ok(Some(ast::Expression::Type(ast::Type::Interface(typ))))
             }
 
             Some((_, Token::Literal(LitKind::Ident, _))) => {
@@ -816,6 +798,9 @@ impl Parser {
                         | Token::Literal(LitKind::String, ..),
                     )) => {
                         let typ = self.qualified_ident(Some(name))?;
+                        let typ = ast::TypeElem {
+                            types: vec![ast::TypeTerm::Type(typ)],
+                        };
                         let tag = self.string_literal_or_none()?;
                         let comments = self.drain_comments();
                         Ok(ast::Field { name: vec![], typ, tag, comments })
@@ -825,19 +810,21 @@ impl Parser {
 
                         let typ = if name.len() == 1 && self.current_is(Operator::BarackLeft) {
                             let typ = self.array_or_typeargs(&mut name)?;
-                            if let ast::SingleType::Instantiated(typ) = typ {
+                            if let ast::Type::Instantiated(typ) = typ {
                                 let tag = self.string_literal_or_none()?;
-                                let typ = ast::Expression::Type(ast::Type::Single(
-                                    ast::SingleType::Instantiated(typ),
-                                ));
+                                let typ = ast::TypeElem {
+                                    types: vec![ast::TypeTerm::Single(ast::Type::Instantiated(
+                                        typ,
+                                    ))],
+                                };
                                 let comments = self.drain_comments();
                                 return Ok(ast::Field { name: vec![], typ, tag, comments });
                             }
-                            ast::Expression::Type(ast::Type::Single(typ))
+                            ast::TypeTerm::Single(typ)
                         } else {
-                            self.type_()?
+                            ast::TypeTerm::Type(self.type_()?)
                         };
-
+                        let typ = ast::TypeElem { types: vec![typ] };
                         let tag = self.string_literal_or_none()?;
                         let comments = self.drain_comments();
                         Ok(ast::Field { name, typ, tag, comments })
@@ -850,9 +837,9 @@ impl Parser {
                 let embedded_type = self.qualified_ident(None)?;
                 let embedded_type = Box::new(embedded_type);
                 let pointer_type = ast::PointerType { pos, typ: embedded_type };
-                let typ = ast::Expression::Type(ast::Type::Single(ast::SingleType::Pointer(
-                    pointer_type,
-                )));
+                let typ = ast::TypeElem {
+                    types: vec![ast::TypeTerm::Single(ast::Type::Pointer(pointer_type))],
+                };
                 let tag = self.string_literal_or_none()?;
                 let comments = self.drain_comments();
                 Ok(ast::Field { name: vec![], typ, tag, comments })
@@ -917,7 +904,9 @@ impl Parser {
         Ok(ast::Field {
             tag: None,
             name: vec![id],
-            typ: ast::Expression::Type(ast::Type::Single(ast::SingleType::Function(func))),
+            typ: ast::TypeElem {
+                types: vec![ast::TypeTerm::Single(ast::Type::Function(func))],
+            },
             comments: Default::default(),
         })
     }
@@ -925,48 +914,26 @@ impl Parser {
     // TypeElem       = TypeTerm { "|" TypeTerm } .
     // TypeTerm       = Type | UnderlyingType .
     // UnderlyingType = "~" Type .
-    fn parse_type_elem(&mut self) -> Result<ast::Expression> {
-        let mut typ = self.parse_type_term()?;
+    fn parse_type_elem(&mut self) -> Result<ast::TypeElem> {
+        let mut terms = vec![self.parse_type_term()?];
         while self.current_is(Operator::Or) {
-            let op = Operator::Or;
-            let pos = self.current_pos();
-            self.next()?;
+            let _pos = self.expect(Operator::Or)?;
 
-            let left = typ;
-            let right = self.parse_type_term()?;
-
-            // FIXME: Remove this once we separate out types properly
-            typ = match (left, right) {
-                (ast::Expression::Type(left), ast::Expression::Type(right)) => {
-                    ast::Expression::Type(ast::Type::Union(ast::UnionType {
-                        pos,
-                        left: Box::new(left),
-                        right: Box::new(right),
-                    }))
-                }
-                (x, y) => ast::Expression::Operation(ast::Operation {
-                    op,
-                    pos,
-                    x: Box::new(x),
-                    y: Some(Box::new(y)),
-                }),
-            };
+            terms.push(self.parse_type_term()?);
         }
 
-        Ok(typ)
+        Ok(ast::TypeElem { types: terms })
     }
 
-    fn parse_type_term(&mut self) -> Result<ast::Expression> {
+    fn parse_type_term(&mut self) -> Result<ast::TypeTerm> {
         let pos = self.current_pos();
         let under_type = self.skipped(Operator::Tiled)?;
         let typ = self.type_()?;
         Ok(match under_type {
-            false => typ,
+            false => ast::TypeTerm::Type(typ),
             true => {
-                let op = Operator::Tiled;
-                let x = Box::new(typ);
-                let opt = ast::Operation { pos, op, x, y: None };
-                ast::Expression::Operation(opt)
+                let under_lying_type = ast::UnderLyingType { pos, typ: Box::new(typ) };
+                ast::TypeTerm::UnderLyingType(under_lying_type)
             }
         })
     }
@@ -1068,11 +1035,9 @@ impl Parser {
                 self.next()?;
                 match self.unray_expression()? {
                     // convert `<- ChanType` to `<-chan Type`
-                    ast::Expression::Type(ast::Type::Single(ast::SingleType::Channel(typ))) => {
+                    ast::Expression::Type(ast::Type::Channel(typ)) => {
                         let chan_type = self.reset_chan_arrow(pos, typ)?;
-                        Ok(ast::Expression::Type(ast::Type::Single(
-                            ast::SingleType::Channel(chan_type),
-                        )))
+                        Ok(ast::Expression::Type(ast::Type::Channel(chan_type)))
                     }
                     // receive message
                     x => {
@@ -1261,9 +1226,7 @@ impl Parser {
                     return Ok(ast::Expression::FuncLit(lit));
                 }
 
-                Ok(ast::Expression::Type(ast::Type::Single(
-                    ast::SingleType::Function(typ),
-                )))
+                Ok(ast::Expression::Type(ast::Type::Function(typ)))
             }
 
             Some((
@@ -1296,13 +1259,9 @@ impl Parser {
                 // <- chan<- T
                 match *typ.typ {
                     // <-chan <-chan T
-                    ast::Expression::Type(ast::Type::Single(ast::SingleType::Channel(
-                        chan_type,
-                    ))) => {
+                    ast::Expression::Type(ast::Type::Channel(chan_type)) => {
                         let chan_type = self.reset_chan_arrow(typ.pos.1, chan_type)?;
-                        typ.typ = Box::new(ast::Expression::Type(ast::Type::Single(
-                            ast::SingleType::Channel(chan_type),
-                        )));
+                        typ.typ = Box::new(ast::Expression::Type(ast::Type::Channel(chan_type)));
                         typ.dir = Some(ast::ChanMode::Recv);
                         typ.pos = (typ.pos.0, pos);
                         Ok(typ)
@@ -1317,10 +1276,10 @@ impl Parser {
     /// check if brace is belong to current expression
     fn check_brace(&self, expr: &ast::Expression) -> bool {
         match expr {
-            ast::Expression::Type(ast::Type::Single(ast::SingleType::Struct(..)))
-            | ast::Expression::Type(ast::Type::Single(ast::SingleType::Map(..)))
-            | ast::Expression::Type(ast::Type::Single(ast::SingleType::Array(..)))
-            | ast::Expression::Type(ast::Type::Single(ast::SingleType::Slice(..))) => true,
+            ast::Expression::Type(ast::Type::Struct(..))
+            | ast::Expression::Type(ast::Type::Map(..) )
+            | ast::Expression::Type(ast::Type::Array(..) )
+             | ast::Expression::Type(ast::Type::Slice(..)) => true,
             ast::Expression::Ident(..)
             | ast::Expression::IndexList(..) // map[k, v]{}
             | ast::Expression::Selector(..)
@@ -1519,11 +1478,9 @@ impl Parser {
                     }
 
                     match self.array_or_typeargs(&mut id_list)? {
-                        ast::SingleType::Instantiated(typ) => {
+                        ast::Type::Instantiated(typ) => {
                             // Type1, Type2[Args]
-                            let typ = ast::Expression::Type(ast::Type::Single(
-                                ast::SingleType::Instantiated(typ),
-                            ));
+                            let typ = ast::Expression::Type(ast::Type::Instantiated(typ));
 
                             let mut list =
                                 id_list.into_iter().map(|id| id.into()).collect::<Vec<_>>();
@@ -1535,7 +1492,9 @@ impl Parser {
                             let name = id_list;
                             return Ok(vec![ast::Field {
                                 name,
-                                typ: ast::Expression::Type(ast::Type::Single(typ)),
+                                typ: ast::TypeElem {
+                                    types: vec![ast::TypeTerm::Single(typ)],
+                                },
                                 tag: None,
                                 comments: Default::default(),
                             }]);
@@ -1566,7 +1525,9 @@ impl Parser {
                     let typ = ast::Expression::Ellipsis(typ);
                     return Ok(vec![ast::Field {
                         name,
-                        typ,
+                        typ: ast::TypeElem {
+                            types: vec![ast::TypeTerm::Type(typ)],
+                        },
                         tag: None,
                         comments: Default::default(),
                     }]);
@@ -1658,9 +1619,7 @@ impl Parser {
                         .map(|id| ast::ParameterSpec {
                             identifiers: vec![],
                             variadic: None,
-                            typ: ast::Expression::Type(ast::Type::Single(ast::SingleType::Name(
-                                ast::NameType::Ident(id),
-                            ))),
+                            typ: ast::Expression::Type(ast::Type::Name(ast::NameType::Ident(id))),
                         })
                         .collect());
                 }
@@ -1672,9 +1631,9 @@ impl Parser {
                             .map(|id| ast::ParameterSpec {
                                 identifiers: vec![],
                                 variadic: None,
-                                typ: ast::Expression::Type(ast::Type::Single(
-                                    ast::SingleType::Name(ast::NameType::Ident(id)),
-                                )),
+                                typ: ast::Expression::Type(ast::Type::Name(ast::NameType::Ident(
+                                    id,
+                                ))),
                             })
                             .collect::<Vec<_>>();
                         list.push(ast::ParameterSpec {
@@ -1686,19 +1645,17 @@ impl Parser {
                     }
 
                     match self.array_or_typeargs(&mut id_list)? {
-                        ast::SingleType::Instantiated(typ) => {
+                        ast::Type::Instantiated(typ) => {
                             // Type1, Type2[Args]
-                            let typ = ast::Expression::Type(ast::Type::Single(
-                                ast::SingleType::Instantiated(typ),
-                            ));
+                            let typ = ast::Expression::Type(ast::Type::Instantiated(typ));
 
                             let mut list = id_list
                                 .into_iter()
                                 .map(|id| ast::ParameterSpec {
                                     identifiers: vec![],
                                     variadic: None,
-                                    typ: ast::Expression::Type(ast::Type::Single(
-                                        ast::SingleType::Name(ast::NameType::Ident(id)),
+                                    typ: ast::Expression::Type(ast::Type::Name(
+                                        ast::NameType::Ident(id),
                                     )),
                                 })
                                 .collect::<Vec<_>>();
@@ -1715,7 +1672,7 @@ impl Parser {
                             return Ok(vec![ast::ParameterSpec {
                                 identifiers,
                                 variadic: None,
-                                typ: ast::Expression::Type(ast::Type::Single(typ)),
+                                typ: ast::Expression::Type(typ),
                             }]);
                         }
                     }
@@ -1731,9 +1688,9 @@ impl Parser {
                             .map(|id| ast::ParameterSpec {
                                 identifiers: vec![],
                                 variadic: None,
-                                typ: ast::Expression::Type(ast::Type::Single(
-                                    ast::SingleType::Name(ast::NameType::Ident(id)),
-                                )),
+                                typ: ast::Expression::Type(ast::Type::Name(ast::NameType::Ident(
+                                    id,
+                                ))),
                             })
                             .collect::<Vec<_>>();
                         list.push(ast::ParameterSpec {
@@ -1770,9 +1727,7 @@ impl Parser {
                         .map(|id| ast::ParameterSpec {
                             identifiers: vec![],
                             variadic: None,
-                            typ: ast::Expression::Type(ast::Type::Single(ast::SingleType::Name(
-                                ast::NameType::Ident(id),
-                            ))),
+                            typ: ast::Expression::Type(ast::Type::Name(ast::NameType::Ident(id))),
                         })
                         .collect::<Vec<_>>();
                     list.push(ast::ParameterSpec {
@@ -1798,15 +1753,16 @@ impl Parser {
                             .map(|id| ast::ParameterSpec {
                                 identifiers: vec![],
                                 variadic: None,
-                                typ: ast::Expression::Type(ast::Type::Single(
-                                    ast::SingleType::Name(ast::NameType::Ident(id)),
-                                )),
+                                typ: ast::Expression::Type(ast::Type::Name(ast::NameType::Ident(
+                                    id,
+                                ))),
                             })
                             .collect::<Vec<_>>());
                     }
 
                     // a, b Type
-                    let typ = self.parse_type_elem()?;
+                    // TODO: Ensure this is most definitely not meant to be a `ast::TypeElem`
+                    let typ = self.type_()?;
                     let identifiers = id_list;
                     return Ok(vec![ast::ParameterSpec {
                         identifiers,
@@ -1826,13 +1782,13 @@ impl Parser {
     /// if list have extra comma then it must be type args
     /// While theoretically the remaining type could be an index expression, this function is only ever called in type parsing contexts so will not be.
     /// If it does parse type arguements then the last item in the identifiers Vec will be removed and used for the name of the instantiated type.
-    fn array_or_typeargs(&mut self, identifiers: &mut Vec<ast::Ident>) -> Result<ast::SingleType> {
+    fn array_or_typeargs(&mut self, identifiers: &mut Vec<ast::Ident>) -> Result<ast::Type> {
         let pos0 = self.expect(Operator::BarackLeft)?;
         if self.current_is(Operator::BarackRight) {
             let pos = (pos0, self.expect(Operator::BarackRight)?);
             let typ = Box::new(self.type_()?);
             let slice = ast::SliceType { pos, typ };
-            return Ok(ast::SingleType::Slice(slice));
+            return Ok(ast::Type::Slice(slice));
         }
 
         let (expr, comma) = self.type_list(false)?;
@@ -1846,7 +1802,7 @@ impl Parser {
                     typ: Box::new(typ),
                 };
 
-                return Ok(ast::SingleType::Array(array));
+                return Ok(ast::Type::Array(array));
             }
         }
 
@@ -1857,7 +1813,7 @@ impl Parser {
             ));
         };
 
-        Ok(ast::SingleType::Instantiated(ast::InstantiatedType {
+        Ok(ast::Type::Instantiated(ast::InstantiatedType {
             pos: (pos0, pos1),
             name: ast::NameType::Ident(name),
             arguements: vec![expr],
@@ -2604,13 +2560,13 @@ fn unparen(expr: ast::Expression) -> ast::Expression {
 
 fn is_type_elem(expr: &ast::Expression) -> bool {
     match expr {
-        ast::Expression::Type(ast::Type::Single(ast::SingleType::Array(..)))
-        | ast::Expression::Type(ast::Type::Single(ast::SingleType::Struct(..)))
-        | ast::Expression::Type(ast::Type::Single(ast::SingleType::Function(..)))
-        | ast::Expression::Type(ast::Type::Single(ast::SingleType::Interface(..)))
-        | ast::Expression::Type(ast::Type::Single(ast::SingleType::Slice(..)))
-        | ast::Expression::Type(ast::Type::Single(ast::SingleType::Map(..)))
-        | ast::Expression::Type(ast::Type::Single(ast::SingleType::Channel(..))) => true,
+        ast::Expression::Type(ast::Type::Array(..))
+        | ast::Expression::Type(ast::Type::Struct(..))
+        | ast::Expression::Type(ast::Type::Function(..))
+        | ast::Expression::Type(ast::Type::Interface(..))
+        | ast::Expression::Type(ast::Type::Slice(..))
+        | ast::Expression::Type(ast::Type::Map(..))
+        | ast::Expression::Type(ast::Type::Channel(..)) => true,
         ast::Expression::Paren(p) => is_type_elem(&p.expr),
         ast::Expression::Operation(opt) => match opt {
             ast::Operation { op: Operator::Tiled, .. } => true,
@@ -2623,7 +2579,7 @@ fn is_type_elem(expr: &ast::Expression) -> bool {
 
 #[cfg(test)]
 mod test {
-    use crate::ast::{self, Declaration, Expression, SingleType, Type};
+    use crate::ast::{self, Declaration, Expression, Type, TypeTerm};
     use crate::parser::Parser;
     use crate::token::{Keyword, Operator};
 
@@ -2661,16 +2617,6 @@ mod test {
         match expression {
             Expression::Ident(ident) => assert_eq!(ident.name, expected),
             other => panic!("expected identifier {expected:?}, got {other:?}"),
-        }
-    }
-
-    fn assert_pointer_type(expression: &Expression, expected_pos: usize) -> &Expression {
-        match expression {
-            Expression::Type(Type::Single(SingleType::Pointer(pointer))) => {
-                assert_eq!(pointer.pos, expected_pos);
-                &pointer.typ
-            }
-            other => panic!("expected pointer type at {expected_pos}, got {other:?}"),
         }
     }
 
@@ -2906,17 +2852,17 @@ mod test {
         };
 
         match typ("type n [2]int")?.typ {
-            ast::Expression::Type(Type::Single(ast::SingleType::Array(_))) => {}
+            ast::Expression::Type(ast::Type::Array(_)) => {}
             _ => return Err(anyhow::anyhow!("not type ARRAY")),
         };
 
         match typ("type a [sz(k{})]T")?.typ {
-            ast::Expression::Type(Type::Single(ast::SingleType::Array(_))) => {}
+            ast::Expression::Type(ast::Type::Array(_)) => {}
             _ => return Err(anyhow::anyhow!("not type ARRAY")),
         };
 
         let type_struct = |s| match typ(s)?.typ {
-            ast::Expression::Type(Type::Single(ast::SingleType::Struct(s))) => Ok(s),
+            ast::Expression::Type(ast::Type::Struct(s)) => Ok(s),
             _ => Err(anyhow::anyhow!("not type STRUCT")),
         };
 
@@ -2968,8 +2914,8 @@ mod test {
         assert_eq!(set.params.list.len(), 1);
         assert_eq!(set.params.list[0].name.len(), 1);
         assert_eq!(set.params.list[0].name[0].name, "P");
-        match &set.params.list[0].typ {
-            Expression::Ident(ident) => assert_eq!(ident.name, "comparable"),
+        match &set.params.list[0].typ.types[..] {
+            [TypeTerm::Type(Expression::Ident(ident))] => assert_eq!(ident.name, "comparable"),
             other => {
                 return Err(anyhow::anyhow!(
                     "expected comparable constraint, got {other:?}"
@@ -2977,7 +2923,7 @@ mod test {
             }
         }
         match &set.typ {
-            Expression::Type(Type::Single(SingleType::Map(map))) => {
+            Expression::Type(Type::Map(map)) => {
                 assert_ident(&map.key, "P");
                 assert_ident(&map.val, "bool");
             }
@@ -3245,10 +3191,7 @@ mod test {
 
         match parse_expression_complete("map[string]int{\"one\": 1}")? {
             Expression::CompositeLit(literal) => {
-                assert!(matches!(
-                    *literal.typ,
-                    Expression::Type(Type::Single(SingleType::Map(_)))
-                ));
+                assert!(matches!(*literal.typ, Expression::Type(Type::Map(_))));
                 assert_eq!(literal.val.values.len(), 1);
             }
             other => return Err(anyhow::anyhow!("expected composite literal, got {other:?}")),
@@ -3400,27 +3343,21 @@ mod test {
         };
 
         assert!(type_element.name.is_empty());
-        let (left, right) = assert_binary(&type_element.typ, Operator::Or);
+        assert_eq!(type_element.typ.types.len(), 2);
+        let (left, right) = match &type_element.typ.types[..] {
+            [TypeTerm::UnderLyingType(left), TypeTerm::UnderLyingType(right)] => (left, right),
+            _ => panic!("Expected 2 Underlying types"),
+        };
+
         for (term, expected) in [(left, "T"), (right, "U")] {
-            match term {
-                Expression::Operation(operation) => {
-                    assert_eq!(operation.op, Operator::Tiled);
-                    assert!(operation.y.is_none());
-                    assert_ident(&operation.x, expected);
-                }
-                other => {
-                    return Err(anyhow::anyhow!(
-                        "expected underlying type {expected}, got {other:?}"
-                    ))
-                }
-            }
+            assert_ident(&term.typ, expected);
         }
 
         assert_eq!(method.name.len(), 1);
         assert_eq!(method.name[0].name, "Method");
         assert!(matches!(
-            method.typ,
-            Expression::Type(Type::Single(SingleType::Function(_)))
+            method.typ.types[0],
+            TypeTerm::Single(Type::Function(_))
         ));
 
         Ok(())
@@ -3473,21 +3410,33 @@ mod test {
         };
 
         assert!(struct_type.fields.iter().all(|field| field.name.is_empty()));
-        assert_ident(&plain.typ, "T");
+        let plain_type = match &plain.typ.types[0] {
+            TypeTerm::Type(typ) => typ,
+            _ => panic!("Expected Expression"),
+        };
+        assert_ident(plain_type, "T");
 
-        let pointer_type = assert_pointer_type(&pointer.typ, 12);
+        let pointer_type = match &pointer.typ.types[0] {
+            TypeTerm::Single(Type::Pointer(typ)) => &typ.typ,
+            _ => panic!("Got unexpected Underlying typ or expression"),
+        };
         assert_ident(pointer_type, "U");
 
-        let qualified_type = assert_pointer_type(&qualified_pointer.typ, 16);
-        match qualified_type {
+        let qualified_type = match &qualified_pointer.typ.types[0] {
+            TypeTerm::Single(Type::Pointer(typ)) => &typ.typ,
+            _ => panic!("Got unexpected underlying type or Expression"),
+        };
+        match &**qualified_type {
             Expression::Selector(selector) => {
                 assert_ident(&selector.x, "pkg");
                 assert_eq!(selector.sel.name, "V");
             }
             other => return Err(anyhow::anyhow!("expected qualified type, got {other:?}")),
         }
-
-        let generic_type = assert_pointer_type(&generic_pointer.typ, 24);
+        let generic_type = match &generic_pointer.typ.types[0] {
+            TypeTerm::Single(Type::Pointer(typ)) => &*typ.typ,
+            _ => panic!("Got unexpected underlying type or Expression"),
+        };
         match generic_type {
             Expression::Index(index) => {
                 assert_ident(&index.left, "Box");
@@ -3510,8 +3459,9 @@ mod test {
         };
         assert_eq!(field.name.len(), 1);
         assert_eq!(field.name[0].name, "events");
-        match &field.typ {
-            Expression::Type(ast::Type::Single(SingleType::Channel(channel))) => {
+        assert_eq!(field.typ.types.len(), 1);
+        match &field.typ.types[0] {
+            TypeTerm::Type(Expression::Type(Type::Channel(channel))) => {
                 assert_eq!(channel.dir, Some(ast::ChanMode::Recv));
                 assert_ident(&channel.typ, "Event");
             }
@@ -4124,7 +4074,7 @@ mod test {
                     assert_eq!(x.specs[0].docs.len(), 1);
 
                     match &x.specs[0].typ {
-                        Expression::Type(Type::Single(SingleType::Struct(x))) => {
+                        Expression::Type(Type::Struct(x)) => {
                             assert_eq!(x.fields[0].comments.len(), 1);
                             assert_eq!(x.fields[1].comments.len(), 2);
                             assert_eq!(x.fields[2].comments.len(), 1);
