@@ -409,6 +409,14 @@ pub struct VarSpec {
 
 #[derive(Default, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct ShortVarDecl {
+    pub pos: usize,
+    pub name: Vec<Ident>,
+    pub values: Vec<Expression>,
+}
+
+#[derive(Default, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ConstSpec {
     pub docs: Vec<Rc<Comment>>,
     pub name: Vec<Ident>,
@@ -662,6 +670,7 @@ pub enum Statement {
     Switch(SwitchStmt),
     Select(SelectStmt),
     Declaration(DeclStmt),
+    ShortVarDecl(ShortVarDecl),
 }
 
 #[derive(Default, Debug, Clone)]
@@ -702,6 +711,12 @@ impl From<BasicLit> for StringLit {
 impl AssignStmt {
     pub fn is_range(&self) -> bool {
         matches!(self.right.first(), Some(Expression::Range(_)))
+    }
+}
+
+impl ShortVarDecl {
+    pub fn is_range(&self) -> bool {
+        matches!(self.values.first(), Some(Expression::Range(_)))
     }
 }
 
@@ -855,6 +870,7 @@ impl Debug for Statement {
                 f.debug_tuple("TypeSwitch").field(arg0).finish()
             }
             Self::Declaration(arg0) => f.debug_tuple("Declaration").field(arg0).finish(),
+            Self::ShortVarDecl(arg0) => f.debug_tuple("ShortVarDecl").field(arg0).finish(),
         }
     }
 }

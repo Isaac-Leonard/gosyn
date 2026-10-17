@@ -1866,8 +1866,7 @@ impl Parser {
 
         Ok(match tok {
             &Token::Operator(
-                op @ (Operator::Define
-                | Operator::Assign
+                op @ (Operator::Assign
                 | Operator::AddAssign
                 | Operator::SubAssign
                 | Operator::MulAssign
@@ -1882,15 +1881,11 @@ impl Parser {
             ) => {
                 self.next()?;
                 let is_range = self.current_is(Keyword::Range);
-                let is_assign = op == Operator::Assign || op == Operator::Define;
+                let is_assign = op == Operator::Assign;
                 let right = match is_range && is_assign {
                     true => vec![ast::Expression::Range(self.parse_range_expr()?)],
                     false => self.expression_list()?,
                 };
-
-                if op == Operator::Define {
-                    self.check_assign_stmt(&left)?;
-                }
 
                 if left.len() < right.len() {
                     return Err(self
@@ -1899,6 +1894,24 @@ impl Parser {
 
                 let assign = ast::AssignStmt { op, pos, left, right };
                 return Ok(ast::Statement::Assign(assign));
+            }
+            Token::Operator(Operator::Define) => {
+                self.next()?;
+                let is_range = self.current_is(Keyword::Range);
+                let values = match is_range {
+                    true => vec![ast::Expression::Range(self.parse_range_expr()?)],
+                    false => self.expression_list()?,
+                };
+
+                let name = self.check_assign_stmt(left)?;
+
+                if name.len() < values.len() {
+                    return Err(self
+                        .else_error_at(pos, "left side can not less than right side for assign"));
+                }
+
+                let decl = ast::ShortVarDecl { pos, name, values };
+                return Ok(ast::Statement::ShortVarDecl(decl));
             }
             _ => {
                 let expr = self.check_single_expr(left)?;
@@ -1941,14 +1954,17 @@ impl Parser {
         ))
     }
 
-    fn check_assign_stmt(&mut self, list: &Vec<ast::Expression>) -> Result<()> {
+    fn check_assign_stmt(&mut self, list: Vec<ast::Expression>) -> Result<Vec<ast::Ident>> {
+        let mut idents = vec![];
         for expr in list {
-            if !matches!(expr, ast::Expression::Ident(..)) {
+            if let ast::Expression::Ident(ident) = expr {
+                idents.push(ident);
+            } else {
                 return Err(self.else_error_at(expr.pos(), "expect identifier on left side of :="));
             }
         }
 
-        Ok(())
+        Ok(idents)
     }
 
     fn parse_decl_stmt(&mut self) -> Result<ast::DeclStmt> {
@@ -2138,7 +2154,11 @@ impl Parser {
             let tag = match tag {
                 None => None,
                 Some(ast::Statement::Expr(s)) => Some(s.expr),
-                _ => return Err(self.else_error("switch tag must be an expression")),
+                other => {
+                    return Err(
+                        self.else_error(format!("switch tag must be an expression, got {other:?}"))
+                    )
+                }
             };
 
             ast::Statement::Switch(ast::SwitchStmt::Expr(ast::ExprSwitchStmt {
@@ -2197,23 +2217,16 @@ impl Parser {
             Some(ast::Statement::Expr(ast::ExprStmt {
                 expr: ast::Expression::TypeAssert(ast::TypeAssertion { right, .. }),
             })) => right.is_none(),
-            Some(ast::Statement::Assign(assign)) => {
-                assign.left.len() == 1
-                    && assign.right.len() == 1
+            Some(ast::Statement::ShortVarDecl(decl)) => {
+                decl.name.len() == 1
+                    && decl.values.len() == 1
                     && matches!(
-                        assign.right.first(),
+                        decl.values.first(),
                         Some(ast::Expression::TypeAssert(ast::TypeAssertion {
                             right: None,
                             ..
                         }))
                     )
-                    && match assign.op {
-                        Operator::Define => true,
-                        Operator::Assign => {
-                            return Err(self.else_error_at(assign.pos, "expect := found ="))
-                        }
-                        _ => false,
-                    }
             }
             _ => false,
         })
@@ -2235,7 +2248,7 @@ impl Parser {
                 let chan = self.check_single_expr(list)?;
                 ast::Statement::Send(ast::SendStmt { pos, chan, value })
             }
-            Some((pos, Token::Operator(op @ (Operator::Define | Operator::Assign)))) => {
+            Some((pos, Token::Operator(op @ Operator::Assign))) => {
                 if list.len() > 2 {
                     return Err(self.else_error("expect 1 or 2 expression"));
                 };
@@ -2245,12 +2258,22 @@ impl Parser {
                 self.next()?;
                 let left = list;
 
-                if op == Operator::Define {
-                    self.check_assign_stmt(&left)?;
-                }
-
                 let right = vec![self.expression()?];
                 ast::Statement::Assign(ast::AssignStmt { pos, op, left, right })
+            }
+            Some((pos, Token::Operator(Operator::Define))) => {
+                if list.len() > 2 {
+                    return Err(self.else_error("expect 1 or 2 expression"));
+                };
+
+                let pos = *pos;
+                self.next()?;
+                let left = list;
+
+                let name = self.check_assign_stmt(left)?;
+
+                let values = vec![self.expression()?];
+                ast::Statement::ShortVarDecl(ast::ShortVarDecl { pos, name, values })
             }
             _ => {
                 let expr = self.check_single_expr(list)?;
@@ -2335,6 +2358,35 @@ impl Parser {
                     let op = Some((assign.pos, assign.op));
 
                     let (pos1, expr) = match assign.right.pop() {
+                        Some(ast::Expression::Range(ast::RangeExpr { pos, right })) => (pos, right),
+                        _ => unreachable!(),
+                    };
+
+                    let expr = *expr;
+                    let pos = (pos, pos1);
+                    self.expr_level = prev_level;
+                    let body = self.parse_block_stmt()?;
+                    return Ok(ast::Statement::Range(ast::RangeStmt {
+                        pos,
+                        key,
+                        value,
+                        op,
+                        expr,
+                        body,
+                    }));
+                }
+                // This is basically the exact same code as the previous branch, just modified to handle declared variables
+                ast::Statement::ShortVarDecl(mut decl) if decl.is_range() => {
+                    if decl.name.len() > 2 {
+                        return Err(self.else_error_at(decl.pos, "expect at most 2 expression"));
+                    }
+
+                    let mut left = decl.name.into_iter().map(ast::Expression::Ident);
+                    let key = left.next();
+                    let value = left.next();
+                    let op = Some((decl.pos, Operator::Define));
+
+                    let (pos1, expr) = match decl.values.pop() {
                         Some(ast::Expression::Range(ast::RangeExpr { pos, right })) => (pos, right),
                         _ => unreachable!(),
                     };
@@ -3650,7 +3702,7 @@ mod test {
                 ast::Statement::Assign(assign) => {
                     finish(&mut parser)?;
                     if assign.left.len() != l_len {
-                        return Err(anyhow::anyhow!("left side length error"));
+                        return Err(anyhow::anyhow!(format!("left side length error for {s}")));
                     }
                     if assign.right.len() != r_len {
                         return Err(anyhow::anyhow!("right side length error"));
@@ -3669,10 +3721,7 @@ mod test {
         assign("a[i] <<= 2", (1, 1))?;
         assign("i &^= 1<<n", (1, 1))?;
         assign("_ = m[K, V]{}", (1, 1))?;
-        assign("t := x.(type)", (1, 1))?;
         assign("_ = AAA{A: 1,}", (1, 1))?;
-        assign("t, ok := x.(int)", (2, 1))?;
-        assign("f2 := func() { go f1() }", (1, 1))?;
         assign("_ = &S[K, V]{a.b.c[0], nil}", (1, 1))?;
         assign("_ = &PeerInfo{time.Now(), '1'}", (1, 1))?;
         assign("one, two, three = '一', '二', '三'", (3, 3))?;
@@ -3690,7 +3739,6 @@ mod test {
             ("value <<= other", Operator::ShlAssign),
             ("value >>= other", Operator::ShrAssign),
             ("value &^= other", Operator::AndNotAssign),
-            ("value := other", Operator::Define),
         ] {
             assert_eq!(assign(source, (1, 1))?.op, expected, "{source}");
         }
@@ -3703,6 +3751,38 @@ mod test {
     }
 
     #[test]
+    fn parse_short_variable_declaration() -> Result<()> {
+        let decl = |s, (l_len, r_len)| {
+            let mut parser = new_started_parser(s);
+            match parser.parse_simple_stmt().map_err(|e| e.context(s))? {
+                ast::Statement::ShortVarDecl(decl) => {
+                    finish(&mut parser)?;
+                    if decl.name.len() != l_len {
+                        return Err(anyhow::anyhow!(format!("name length error for {s}")));
+                    }
+                    if decl.values.len() != r_len {
+                        return Err(anyhow::anyhow!("right side length error"));
+                    }
+
+                    Ok(decl)
+                }
+                _ => Err(anyhow::anyhow!("not a ASSIGN statement")),
+            }
+        };
+
+        decl("t := x.(type)", (1, 1))?;
+        decl("t, ok := x.(int)", (2, 1))?;
+        decl("f2 := func() { go f1() }", (1, 1))?;
+        decl("one, two, three := 1, 2, 3", (3, 3))?;
+
+        assert!(decl("a b := f()", (2, 1)).is_err());
+        assert!(decl("a := b() c()", (1, 2)).is_err());
+        assert!(decl("a := b(), c()", (1, 2)).is_err());
+
+        Ok(())
+    }
+
+    #[test]
     fn parse_for_stmt() -> Result<()> {
         let range_stmt = |s| {
             let mut parser = new_started_parser(s);
@@ -3710,7 +3790,7 @@ mod test {
             finish(&mut parser)?;
             match statement {
                 ast::Statement::Range(rg) => Ok(rg),
-                _ => Err(anyhow::anyhow!("not a RANGE statement")),
+                other => Err(anyhow::anyhow!("not a RANGE statement: {other:?}")),
             }
         };
 
