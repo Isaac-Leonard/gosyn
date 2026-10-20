@@ -3197,6 +3197,14 @@ mod test {
             other => return Err(anyhow::anyhow!("expected composite literal, got {other:?}")),
         }
 
+        match parse_expression_complete("Point{x: 1, y:-3}")? {
+            Expression::CompositeLit(literal) => {
+                assert_ident(&literal.typ, "Point");
+                assert_eq!(literal.val.values.len(), 2);
+            }
+            other => return Err(anyhow::anyhow!("expected composite literal, got {other:?}")),
+        }
+
         Ok(())
     }
 
